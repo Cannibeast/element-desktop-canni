@@ -5,19 +5,36 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only OR LicenseRef-Element-Com
 Please see LICENSE files in the repository root for full details.
 */
 
-import { type BrowserWindow, ipcMain, session } from "electron";
+import { type BrowserWindow, ipcMain, session, type IpcMainEvent } from "electron";
+
+const RENDERER_RESPONSE_TIMEOUT_MS = 5_000;
+
+function requestRendererValue<T>(window: BrowserWindow, channel: string): Promise<T | undefined> {
+    return new Promise((resolve) => {
+        const timeout = setTimeout(() => {
+            console.warn(`Timed out waiting for renderer response on ${channel}`);
+            ipcMain.removeListener(channel, onResponse);
+            resolve(undefined);
+        }, RENDERER_RESPONSE_TIMEOUT_MS);
+        const onResponse = (event: IpcMainEvent, response: T): void => {
+            if (event.sender !== window.webContents) return;
+            clearTimeout(timeout);
+            ipcMain.removeListener(channel, onResponse);
+            resolve(response);
+        };
+
+        ipcMain.on(channel, onResponse);
+        window.webContents.send(channel);
+    });
+}
 
 /**
  * Check for feature support from the server.
  * This requires asking the renderer process for supported versions.
  */
 async function getSupportedVersions(window: BrowserWindow): Promise<string[]> {
-    return new Promise((resolve) => {
-        ipcMain.once("serverSupportedVersions", (_, versionsResponse) => {
-            resolve(versionsResponse?.versions || []);
-        });
-        window.webContents.send("serverSupportedVersions"); // ping now that the listener exists
-    });
+    const versionsResponse = await requestRendererValue<{ versions?: string[] }>(window, "serverSupportedVersions");
+    return versionsResponse?.versions ?? [];
 }
 
 /**
@@ -25,12 +42,7 @@ async function getSupportedVersions(window: BrowserWindow): Promise<string[]> {
  * This requires asking the renderer process for the access token.
  */
 async function getAccessToken(window: BrowserWindow): Promise<string | undefined> {
-    return new Promise((resolve) => {
-        ipcMain.once("userAccessToken", (_, accessToken) => {
-            resolve(accessToken);
-        });
-        window.webContents.send("userAccessToken"); // ping now that the listener exists
-    });
+    return requestRendererValue<string>(window, "userAccessToken");
 }
 
 /**
@@ -38,12 +50,7 @@ async function getAccessToken(window: BrowserWindow): Promise<string | undefined
  * This requires asking the renderer process for the homeserver url.
  */
 async function getHomeserverUrl(window: BrowserWindow): Promise<string> {
-    return new Promise((resolve) => {
-        ipcMain.once("homeserverUrl", (_, homeserver) => {
-            resolve(homeserver);
-        });
-        window.webContents.send("homeserverUrl"); // ping now that the listener exists
-    });
+    return (await requestRendererValue<string>(window, "homeserverUrl")) ?? "";
 }
 
 export function setupMediaAuth(window: BrowserWindow): void {
@@ -72,6 +79,7 @@ export function setupMediaAuth(window: BrowserWindow): void {
             }
         } catch (e) {
             console.error(e);
+            callback({});
         }
     });
 
@@ -101,6 +109,7 @@ export function setupMediaAuth(window: BrowserWindow): void {
             return callback({ requestHeaders: headers });
         } catch (e) {
             console.error(e);
+            callback({});
         }
     });
 }

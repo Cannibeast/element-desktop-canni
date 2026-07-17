@@ -61,7 +61,7 @@ contextBridge.exposeInMainWorld("electron", {
          */
         supportsBadgeOverlay: boolean;
     }> {
-        ipcRenderer.emit("initialise");
+        ipcRenderer.send("initialise");
         const [{ protocol, sessionId }, config, supportedSettings] = await Promise.all([
             ipcRenderer.invoke("getProtocol"),
             ipcRenderer.invoke("getConfig"),
